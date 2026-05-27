@@ -1,4 +1,4 @@
-const API_KEY = api.API_KEY;
+import { API_KEY } from "./api.js";
 let availableModels = [];
 
 async function getAvailableModels() {
