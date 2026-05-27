@@ -1,4 +1,4 @@
-const API_KEY = '';
+const API_KEY = api.API_KEY;
 let availableModels = [];
 
 async function getAvailableModels() {
