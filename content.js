@@ -1,4 +1,6 @@
-// Przechwytywanie obrazka
+const SHOW_INLINE_BUTTONS = true;   // Pokazuje przyciski "Rozwiąż/Zweryfikuj" pod zadaniami
+const SHOW_FLOATING_WINDOW = true;  // Pokazuje powiadomienia w prawym górnym rogu
+
 async function getBase64Image(imgElement) {
     if (!imgElement) return null;
     if (!imgElement.complete) {
@@ -31,7 +33,7 @@ function isValidRadio(r) {
     return true;
 }
 
-// Sprawdzanie czy udzielono odpowiedzi we WSZYSTKICH typach pól
+// Sprawdzanie czy udzielono odpowiedzi
 function checkIsAnswered(taskElement) {
     const fillables = taskElement.querySelectorAll('input[type="text"], input[type="number"], textarea, div[contenteditable="true"], select');
     const radios = taskElement.querySelectorAll('input[type="radio"], input[type="checkbox"]');
@@ -40,7 +42,6 @@ function checkIsAnswered(taskElement) {
     radios.forEach(r => { if (r.checked && isValidRadio(r)) isAnswered = true; });
     fillables.forEach(f => {
         if (f.tagName.toLowerCase() === 'select') {
-            // Moodle w listach daje pusty value lub '0' dla "Wybierz..."
             if (f.value && f.value !== "0" && f.value !== "-1" && f.selectedIndex > 0) isAnswered = true;
         } else if (f.hasAttribute('contenteditable')) {
             if (f.innerText.replace(/[\n\r]/g, '').trim() !== "") isAnswered = true;
@@ -64,6 +65,8 @@ function updateButtonState(btn, taskElement) {
 }
 
 function injectButtons() {
+    if (!SHOW_INLINE_BUTTONS) return; // Jeśli przyciski są wyłączone, przerywamy funkcję
+
     const tasks = document.querySelectorAll('.formulation.clearfix');
 
     tasks.forEach((taskElement) => {
@@ -111,6 +114,30 @@ function injectButtons() {
         taskElement.appendChild(btn);
     });
 }
+
+// Obsługa wywołania ze skrótu klawiszowego (przechwytuje żądanie z background.js)
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "startAnalysis") {
+        const tasks = document.querySelectorAll('.formulation.clearfix');
+        if (tasks.length === 0) {
+            showResponseDiv("Brak zadań do rozwiązania na tej stronie.");
+            return;
+        }
+
+        // Uruchamiamy analizę dla wszystkich widocznych zadań (lub pierwszego, w zależności od potrzeb Moodle)
+        tasks.forEach(async (taskElement) => {
+            const isAnswered = checkIsAnswered(taskElement);
+            const userMode = isAnswered ? 'verify' : 'solve';
+            
+            const currentFillables = Array.from(taskElement.querySelectorAll('input[type="text"], input[type="number"], textarea, div[contenteditable="true"], select'));
+            const allRadios = Array.from(taskElement.querySelectorAll('input[type="radio"], input[type="checkbox"]'));
+            const validRadios = allRadios.filter(isValidRadio);
+            const btn = taskElement.querySelector('.ai-action-btn'); // Może być null, jeśli przyciski są wyłączone
+
+            await handleTaskAnalysis(taskElement, userMode, currentFillables, validRadios, btn);
+        });
+    }
+});
 
 async function handleTaskAnalysis(taskElement, userMode, fillables, validRadios, btnElement) {
     const contextElement = document.querySelector('.page-context-header.d-flex.flex-wrap.align-items-center.mb-2');
@@ -184,24 +211,12 @@ function processJsonAction(replyText, fieldType, fillables, validRadios, taskEle
             
         } else if (userMode === 'verify') {
             let isCorrect = true;
-            let aiSuggested = [];
 
             if (validRadios.length > 0 && aiData.answers) {
                 const userAnswers = [];
                 validRadios.forEach((r, idx) => { if (r.checked) userAnswers.push(idx + 1); });
                 if ([...userAnswers].sort().join(',') !== [...aiData.answers].sort().join(',')) {
                     isCorrect = false;
-                    aiData.answers.forEach(ansNum => {
-                        const idx = parseInt(ansNum) - 1;
-                        if(validRadios[idx]) {
-                            let labelText = validRadios[idx].parentNode.innerText.trim();
-                            if (validRadios[idx].id) {
-                                const label = taskElement.querySelector(`label[for="${validRadios[idx].id}"]`);
-                                if (label) labelText = label.innerText.trim();
-                            }
-                            aiSuggested.push(`Prawidłowa opcja wyboru: ${labelText.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim()}`);
-                        }
-                    });
                 }
             } 
             
@@ -223,7 +238,6 @@ function processJsonAction(replyText, fieldType, fillables, validRadios, taskEle
                                 userVal = el.value.trim().toLowerCase();
                             }
                             
-                            aiSuggested.push(`Pole nr ${idx + 1}: ${aiData[key]}`);
                             if (userVal !== aiVal) isCorrect = false;
                         }
                     }
@@ -234,10 +248,11 @@ function processJsonAction(replyText, fieldType, fillables, validRadios, taskEle
                 showResponseDiv("🎉 Brawo! Odpowiedź jest całkowicie poprawna.");
                 updateButtonState(btnElement, taskElement);
             } else {
-                showCenterModal(aiSuggested.join('\n\n'), () => {
-                    applyAiDataToForm(aiData, fillables, validRadios);
-                    setTimeout(() => updateButtonState(btnElement, taskElement), 100);
-                });
+                // BRAK MODALA NA ŚRODKU!
+                // Wypuszczamy komunikat do bocznego okna i automatycznie zamieniamy odpowiedzi na właściwe
+                showResponseDiv("⚠️ Wykryto błędną odpowiedź! Została automatycznie nadpisana.");
+                applyAiDataToForm(aiData, fillables, validRadios);
+                setTimeout(() => updateButtonState(btnElement, taskElement), 100);
             }
         }
     } catch (e) {
@@ -245,7 +260,6 @@ function processJsonAction(replyText, fieldType, fillables, validRadios, taskEle
     }
 }
 
-// Sprytne wstrzykiwanie danych do list i divów
 function applyAiDataToForm(aiData, fillables, validRadios) {
     if (aiData.answers && validRadios.length > 0) {
         validRadios.forEach(r => { r.checked = false; r.dispatchEvent(new Event('change', { bubbles: true })); });
@@ -267,19 +281,16 @@ function applyAiDataToForm(aiData, fillables, validRadios) {
                 if (el) {
                     const val = aiData[key];
                     if (el.tagName.toLowerCase() === 'select') {
-                        // Szuka pasującego elementu na liście rozwijanej i zaznacza go
                         const option = Array.from(el.options).find(o => o.text.trim().toLowerCase() === String(val).trim().toLowerCase());
                         if (option) {
                             el.value = option.value;
                             el.dispatchEvent(new Event('change', { bubbles: true }));
                         }
                     } else if (el.hasAttribute('contenteditable')) {
-                        // Wstrzykuje tekst do edytora wizualnego Atto
                         el.innerText = val;
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                         el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
                     } else {
-                        // Standardowy input
                         el.value = val;
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -291,6 +302,12 @@ function applyAiDataToForm(aiData, fillables, validRadios) {
 }
 
 function showResponseDiv(text) {
+    // Jeśli okienko ma być wyłączone, wysyłamy log do konsoli przeglądarki (F12)
+    if (!SHOW_FLOATING_WINDOW) {
+        console.log("[Web AI Reader]:", text);
+        return;
+    }
+
     let resultDiv = document.getElementById('ai-extension-result');
     if (!resultDiv) {
         resultDiv = document.createElement('div');
@@ -304,49 +321,6 @@ function showResponseDiv(text) {
         document.body.appendChild(resultDiv);
     }
     resultDiv.innerText = text;
-}
-
-function showCenterModal(explanationText, onReplace) {
-    const oldModal = document.getElementById('ai-center-modal');
-    if (oldModal) oldModal.remove();
-
-    const modalOverlay = document.createElement('div');
-    modalOverlay.id = 'ai-center-modal';
-    Object.assign(modalOverlay.style, {
-        position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
-        backgroundColor: 'rgba(15, 23, 42, 0.7)', zIndex: '1000000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Segoe UI, sans-serif'
-    });
-
-    const modalBox = document.createElement('div');
-    Object.assign(modalBox.style, {
-        backgroundColor: '#1e293b', color: '#f8fafc', width: '500px', padding: '25px', borderRadius: '16px', border: '2px solid #ef4444',
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)', display: 'flex', flexDirection: 'column', gap: '15px'
-    });
-
-    const title = document.createElement('h3');
-    title.innerText = '⚠️ Model sugeruje inną odpowiedź:';
-    title.style.color = '#f87171'; title.style.margin = '0';
-
-    const content = document.createElement('div');
-    content.innerText = explanationText; 
-    content.style.fontSize = '14px'; content.style.lineHeight = '1.6'; content.style.maxHeight = '250px'; content.style.overflowY = 'auto';
-
-    const btnContainer = document.createElement('div');
-    Object.assign(btnContainer.style, { display: 'flex', justifyContent: 'flex-end', gap: '10px' });
-
-    const btnKeep = document.createElement('button');
-    btnKeep.type = 'button'; btnKeep.innerText = 'Zostaw moją odpowiedź';
-    Object.assign(btnKeep.style, { padding: '8px 16px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' });
-    btnKeep.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); modalOverlay.remove(); });
-
-    const btnReplace = document.createElement('button');
-    btnReplace.type = 'button'; btnReplace.innerText = 'Zamień na to!';
-    Object.assign(btnReplace.style, { padding: '8px 16px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' });
-    btnReplace.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onReplace(); modalOverlay.remove(); });
-
-    btnContainer.appendChild(btnKeep); btnContainer.appendChild(btnReplace);
-    modalBox.appendChild(title); modalBox.appendChild(content); modalBox.appendChild(btnContainer);
-    modalOverlay.appendChild(modalBox); document.body.appendChild(modalOverlay);
 }
 
 if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', injectButtons); } 
