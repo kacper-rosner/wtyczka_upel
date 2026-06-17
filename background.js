@@ -28,7 +28,7 @@ async function getAvailableModels() {
 
         return sortedModels.map(m => m.name.replace('models/', ''));
     } catch (e) {
-        return ['gemini-3.1-flash-lite'];
+        return ['gemini-3.1-flash-lite', 'gemini-1.5-flash'];
     }
 }
 
@@ -63,43 +63,21 @@ async function processAIWithFallback(data) {
     }
 
     let instruction = `Jesteś ekspertem z dziedziny: ${data.context}.\n\n`;
-    
-    // Rozróżnienie promptu w zależności od wybranego przycisku (solve / verify)
-    if (data.mode === 'verify') {
-        instruction += `ZADANIE UŻYTKOWNIKA: Przeanalizuj treść zadania oraz sprawdź, czy aktualnie zaznaczone/wpisane przez użytkownika odpowiedzi (widoczne w treści zadania jako stan tekstowy lub zaznaczenie) są poprawne.\n`;
-        instruction += `INSTRUKCJA ZWROTNA:\n`;
-        instruction += `1. Jeśli użytkownik odpowiedział dobrze, zwróć wyłącznie frazę: ODPOWIEDZ_POPRAWNA\n`;
-        instruction += `2. Jeśli użytkownik popełnił błąd, rozpocznij odpowiedź od słowa ODPOWIEDZ_BLEDNA, a następnie wyjaśnij zwięźle dlaczego to błąd. Na samym końcu wypowiedzi podaj prawidłowe rozwiązanie w formacie JSON (czysty JSON bez markdownu), tak aby system mógł je podmienić, np:\n`;
-        if (data.fieldType === 'radio') {
-            instruction += `{"answers": [1]}\n`;
-        } else {
-            instruction += `{"ans1": "wartosc1"}\n`;
-        }
-    } else {
-        // Standardowy tryb rozwiązywania (solve)
-        instruction += "Rozwiąż poniższe zadanie.\n";
-        if (data.fieldType === 'radio') {
-            instruction += `UWAGA: To zadanie testowe wyboru (radio). Zwrć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answers": [1]} lub {"answers": [1, 3]} (gdzie liczby to numery poprawnych odpowiedzi liczone od 1). NIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
-        } else if (data.fieldType === 'input') {
-            instruction += `UWAGA: Zadanie posiada pola wpisywania. Zwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"ans1": "wartosc1", "ans2": "wartosc2"} zgodnie z kolejnością występowania pól. NIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
-        } else {
-            instruction += "Zwróć rozwiązanie w krótkiej, zwięzłej formie tekstowej.\n";
-        }
-    }
+    instruction += "Rozwiąż poniższe zadanie. Jeśli dostarczono obrazek, przeanalizuj go w kontekście pytania.\n";
+    instruction += `UWAGA: Zwróć TYLKO I WYŁĄCZNIE CZYSTY JSON (bez znaczników markdown \`\`\`).\n`;
+    instruction += `Jeśli zadanie ma opcje wyboru (kropki/kwadraty), dodaj: "answers": [nr_poprawnej_opcji].\n`;
+    instruction += `Jeśli zadanie ma pola wpisywania/listy, dodaj: "ans1": "tekst", "ans2": "tekst".\n`;
+    instruction += `Format docelowy np: {"answers": [1], "ans1": "Kraków"}\n`;
 
-    // Przygotowanie tablicy zawartości dla Gemini
     const requestParts = [{ text: instruction + "ZADANIE:\n" + data.text }];
 
-    if (data.imageUrl) {
-        const imageData = await imageUrlToBase64(data.imageUrl);
-        if (imageData) {
-            requestParts.push({
-                inlineData: {
-                    mimeType: imageData.mimeType,
-                    data: imageData.data
-                }
-            });
-        }
+    if (data.imageData) {
+        requestParts.push({
+            inlineData: {
+                mimeType: data.imageData.mimeType,
+                data: data.imageData.data
+            }
+        });
     }
 
     for (let i = 0; i < availableModels.length; i++) {
@@ -130,27 +108,5 @@ async function processAIWithFallback(data) {
         }
     }
 
-    return { error: "Wyczerpano limit zapytań dla wszystkich dostępnych modeli. Odczekaj chwilę." };
-}
-
-async function imageUrlToBase64(url) {
-    try {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64Data = reader.result.split(',')[1];
-                resolve({
-                    mimeType: blob.type || "image/png",
-                    data: base64Data
-                });
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-    } catch (e) {
-        console.error("Nie udało się pobrać lub przekonwertować obrazka:", e);
-        return null;
-    }
+    return { error: "Wyczerpano limit zapytań dla wszystkich modeli." };
 }
