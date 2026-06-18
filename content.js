@@ -51,9 +51,7 @@ function handleAIResponse(replyText, fieldType, inputs, radios) {
     }
 
     // 1. Czyszczenie odpowiedzi ze znaczników markdown, jeśli model mimo instrukcji je doda
-    let cleanJsonString = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
-    
-    // Zabezpieczenie przed tekstem przed klamrą
+   let cleanJsonString = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
     const jsonStartIndex = cleanJsonString.indexOf('{');
     const jsonEndIndex = cleanJsonString.lastIndexOf('}');
     if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
@@ -61,10 +59,14 @@ function handleAIResponse(replyText, fieldType, inputs, radios) {
     }
 
     try {
-        // 2. Parsowanie odpowiedzi do obiektu JS
         const aiData = JSON.parse(cleanJsonString);
-        let actionLog = "Pomyślnie zdekodowano JSON.\n\n";
+        
+        chrome.storage.local.set({
+            lastAiResponse: cleanJsonString,
+            pdfRead: aiData.pdf_read === true
+        });
 
+        let actionLog = "Pomyślnie zdekodowano JSON.\n\n";
         // 3. Automatyczne wypełnianie RADIO / CHECKBOX
         if (fieldType === 'radio' && aiData.answers) {
             aiData.answers.forEach(ansNum => {

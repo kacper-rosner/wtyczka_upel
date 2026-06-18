@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Ustawienia AI Context</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 400px; }
+        .container { display: flex; flex-direction: column; gap: 15px; }
+        button { padding: 10px; background: #38bdf8; border: none; color: white; cursor: pointer; transition: 0.2s; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .toggle-container { display: flex; align-items: center; gap: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Dodatkowy Kontekst (PDF/PPTX)</h2>
+        
+        <div class="toggle-container">
+            <input type="checkbox" id="enableContextToggle" />
+            <label for="enableContextToggle">Włącz obsługę dodatkowego kontekstu</label>
+        </div>
+
+        <div class="toggle-container">
+            <input type="checkbox" id="knowledgeModeToggle" />
+            <label for="knowledgeModeToggle">Tryb Knowledge (zaawansowany model)</label>
+        </div>
+
+        <input type="file" id="fileInput" accept=".pdf,.pptx" disabled />
+        <button id="saveBtn" disabled>Zapisz kontekst w pamięci</button>
+        <button id="clearBtn" disabled>Wyczyść kontekst</button>
+        <div id="status"></div>
+    </div>
+    <script src="options.js"></script>
+</body>
+</html>

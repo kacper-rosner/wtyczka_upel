@@ -57,32 +57,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
 });
-
 async function processAIWithFallback(data) {
     if (availableModels.length === 0) {
         availableModels = await getAvailableModels();
     }
 
-    let instruction = `Jesteś ekspertem z dziedziny: ${data.context}. Rozwiąż poniższe zadanie.\n\n`;
-    
-    // Nowe, restrykcyjne zasady promptowania
+    let instruction = `Jesteś ekspertem z dziedziny: ${data.context}. Rozwiąż poniższe zadanie.\nZawsze dodawaj do struktury JSON pole "pdf_read": true (jeśli otrzymałeś w kontekście zewnętrzny plik i z niego skorzystałeś) lub false (jeśli plik nie został dodany lub był niepotrzebny).\n\n`;
+
     if (data.fieldType === 'radio') {
-        instruction += `UWAGA: To zadanie testowe wyboru (radio). Zwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answers": [1]} lub {"answers": [1, 3]} (gdzie liczby to numery poprawnych odpowiedzi liczone od 1). NIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
+        instruction += `UWAGA: To zadanie testowe wyboru (radio).\nZwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answers": [1], "pdf_read": true/false} lub {"answers": [1, 3], "pdf_read": true/false} (gdzie liczby to numery poprawnych odpowiedzi liczone od 1).\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
     } else if (data.fieldType === 'input') {
-        instruction += `UWAGA: Zadanie posiada pola wpisywania. Zwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"ans1": "wartosc1", "ans2": "wartosc2"} zgodnie z kolejnością występowania pól. NIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
+        instruction += `UWAGA: Zadanie posiada pola wpisywania.\nZwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"ans1": "wartosc1", "ans2": "wartosc2", "pdf_read": true/false} zgodnie z kolejnością występowania pól.\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
     } else {
-        instruction += "Zwróć rozwiązanie w krótkiej, zwięzłej formie tekstowej.\n";
+        instruction += `Zwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answer": "rozwiązanie zadania", "pdf_read": true/false}.\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani tekstu.\n`;
     }
 
-    for (let i = 0; i < availableModels.length; i++) {
-        const currentModel = availableModels[i];
-        
+    const storageData = await chrome.storage.local.get(['customContextFile', 'contextEnabled', 'knowledgeModeEnabled']);
+    const promptParts = [{ text: instruction + "ZADANIE:\n" + data.text }];
+
+    if (storageData.contextEnabled && storageData.customContextFile) {
+        promptParts.push({
+            inlineData: {
+                mimeType: storageData.customContextFile.mimeType,
+                data: storageData.customContextFile.data
+            }
+        });
+    }
+
+    let currentModelsQueue = [...availableModels];
+
+    if (storageData.knowledgeModeEnabled) {
+        currentModelsQueue.sort((a, b) => {
+            const getKnowledgeScore = (name) => {
+                let score = 0;
+                if (name.includes('pro')) score += 100;
+                if (name.includes('flash') && !name.includes('lite')) score += 50;
+                if (!name.includes('preview')) score += 10;
+                return score;
+            };
+            return getKnowledgeScore(b) - getKnowledgeScore(a);
+        });
+    }
+
+    for (let i = 0; i < currentModelsQueue.length; i++) {
+        const currentModel = currentModelsQueue[i];
         try {
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${API_KEY}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: instruction + "ZADANIE:\n" + data.text }] }]
+                    contents: [{ parts: promptParts }]
                 })
             });
 
@@ -96,9 +120,8 @@ async function processAIWithFallback(data) {
             }
             
             return { reply: result.candidates[0].content.parts[0].text, fieldType: data.fieldType };
-            
         } catch (e) {
-            if (i === availableModels.length - 1) return { error: "Błąd sieci: " + e.message };
+            if (i === currentModelsQueue.length - 1) return { error: "Błąd sieci: " + e.message };
         }
     }
 
