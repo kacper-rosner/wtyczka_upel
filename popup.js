@@ -10,6 +10,8 @@ const aiStatusDiv = document.getElementById('aiStatus');
 const jsonOutputDiv = document.getElementById('jsonOutput');
 const actionButtons = document.getElementById('actionButtons');
 const logsArea = document.getElementById('logsArea');
+import { API_KEY } from "./api.js";
+
 
 chrome.storage.local.get(['contextEnabled', 'knowledgeModeEnabled', 'hideButtons', 'hideLogs', 'lastAiResponse', 'pdfRead', 'customContextFile'], (result) => {
     const isEnabled = result.contextEnabled === true;
@@ -20,11 +22,7 @@ chrome.storage.local.get(['contextEnabled', 'knowledgeModeEnabled', 'hideButtons
     
     updateUI(isEnabled);
     updateVisibility();
-    
-    if (result.customContextFile) {
-        statusDiv.innerText = `[GOTOWE] Wgrano: ${result.customContextFile.name}`;
-    }
-    
+    updateFileStatus(result.customContextFile);
     updateAiLogs(result.lastAiResponse, result.pdfRead);
 });
 
@@ -66,6 +64,23 @@ function updateVisibility() {
     logsArea.classList.toggle('hidden', hideLogsToggle.checked);
 }
 
+function updateFileStatus(fileObj) {
+    if (!fileObj) {
+        statusDiv.innerText = "";
+        return;
+    }
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    const timePassed = Date.now() - fileObj.uploadedAt;
+    if (timePassed > ONE_DAY_MS) {
+        statusDiv.innerText = `[WYGASŁ] Plik ${fileObj.name} wygasł po 24h. Wgraj ponownie.`;
+        statusDiv.style.color = "#ef4444";
+    } else {
+        const hoursLeft = Math.round((ONE_DAY_MS - timePassed) / (1000 * 60 * 60));
+        statusDiv.innerText = `[GOTOWE] Wgrano: ${fileObj.name} (Zostało ok. ${hoursLeft}h)`;
+        statusDiv.style.color = "#16a34a";
+    }
+}
+
 function updateAiLogs(jsonString, pdfRead) {
     if (jsonString) {
         jsonOutputDiv.innerText = jsonString;
@@ -75,25 +90,88 @@ function updateAiLogs(jsonString, pdfRead) {
         aiStatusDiv.style.color = pdfRead ? '#16a34a' : '#64748b';
     }
 }
-
-saveBtn.addEventListener('click', () => {
+saveBtn.addEventListener('click', async () => {
     const file = fileInput.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const base64Data = e.target.result.split(',')[1];
-        chrome.storage.local.set({
-            customContextFile: {
-                mimeType: file.type || 'application/pdf',
-                data: base64Data,
-                name: file.name
-            }
-        }, () => {
-            statusDiv.innerText = `[GOTOWE] Wgrano: ${file.name}`;
+    statusDiv.innerText = "Inicjalizacja przesyłania...";
+    statusDiv.style.color = "#64748b";
+
+    if (!API_KEY || API_KEY.trim() === "" || API_KEY.includes("TWÓJ_KLUCZ")) {
+        statusDiv.innerText = "BŁĄD KONFIGURACJI: Brak poprawnego klucza API w config.js";
+        statusDiv.style.color = "#ef4444";
+        return;
+    }
+
+    const mimeType = file.type || 'application/pdf';
+
+    try {
+        const initResponse = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${API_KEY}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Goog-Upload-Protocol": "resumable",
+                "X-Goog-Upload-Command": "start",
+                "X-Goog-Upload-Header-Content-Length": file.size.toString(),
+                "X-Goog-Upload-Header-Content-Type": mimeType
+            },
+            body: JSON.stringify({
+                file: { displayName: file.name }
+            })
         });
-    };
-    reader.readAsDataURL(file);
+
+        if (!initResponse.ok) {
+            const text = await initResponse.text();
+            throw new Error(`Inicjalizacja nieudana (${initResponse.status}): ${text}`);
+        }
+
+        const uploadUrl = initResponse.headers.get("X-Goog-Upload-URL");
+        if (!uploadUrl) {
+            throw new Error("Nie otrzymano dedykowanego URL uploadu od Google.");
+        }
+
+        statusDiv.innerText = "Wysyłanie pliku...";
+
+        const uploadResponse = await fetch(uploadUrl, {
+            method: "POST",
+            headers: {
+                "X-Goog-Upload-Offset": "0",
+                "X-Goog-Upload-Command": "upload, finalize"
+            },
+            body: file
+        });
+
+        const responseText = await uploadResponse.text();
+        let result;
+        try {
+            result = JSON.parse(responseText);
+        } catch (jsonErr) {
+            throw new Error("Serwer nie zwrócił poprawnego JSON: " + responseText);
+        }
+
+        if (!uploadResponse.ok) {
+            const apiError = result.error ? `${result.error.code}: ${result.error.message}` : "Błąd " + uploadResponse.status;
+            throw new Error("Google API odmówił zapisu -> " + apiError);
+        }
+
+        if (result.file && result.file.uri) {
+            const newFileObj = {
+                fileUri: result.file.uri,
+                mimeType: mimeType,
+                name: file.name,
+                uploadedAt: Date.now()
+            };
+            chrome.storage.local.set({ customContextFile: newFileObj }, () => {
+                updateFileStatus(newFileObj);
+            });
+        } else {
+            throw new Error("Brak parametru file.uri w odpowiedzi serwera.");
+        }
+    } catch (e) {
+        console.error("PEŁNY ZRZUT BŁĘDU DEWELOPERSKIEGO:", e);
+        statusDiv.innerText = e.name + ": " + e.message;
+        statusDiv.style.color = "#ef4444";
+    }
 });
 
 clearBtn.addEventListener('click', () => {

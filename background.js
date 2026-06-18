@@ -75,13 +75,16 @@ async function processAIWithFallback(data) {
     const storageData = await chrome.storage.local.get(['customContextFile', 'contextEnabled', 'knowledgeModeEnabled']);
     const promptParts = [{ text: instruction + "ZADANIE:\n" + data.text }];
 
-    if (storageData.contextEnabled && storageData.customContextFile) {
-        promptParts.push({
-            inlineData: {
-                mimeType: storageData.customContextFile.mimeType,
-                data: storageData.customContextFile.data
-            }
-        });
+    if (storageData.contextEnabled && storageData.customContextFile && storageData.customContextFile.fileUri) {
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        if (Date.now() - storageData.customContextFile.uploadedAt < ONE_DAY_MS) {
+            promptParts.push({
+                fileData: {
+                    fileUri: storageData.customContextFile.fileUri,
+                    mimeType: storageData.customContextFile.mimeType
+                }
+            });
+        }
     }
 
     let currentModelsQueue = [...availableModels];

@@ -43,15 +43,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         );
     }
 });
-
 function handleAIResponse(replyText, fieldType, inputs, radios) {
     if (fieldType === 'text') {
         showResponseDiv(replyText);
         return;
     }
 
-    // 1. Czyszczenie odpowiedzi ze znaczników markdown, jeśli model mimo instrukcji je doda
-   let cleanJsonString = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
+    let cleanJsonString = replyText.replace(/```json/g, '').replace(/```/g, '').trim();
     const jsonStartIndex = cleanJsonString.indexOf('{');
     const jsonEndIndex = cleanJsonString.lastIndexOf('}');
     if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
@@ -67,13 +65,11 @@ function handleAIResponse(replyText, fieldType, inputs, radios) {
         });
 
         let actionLog = "Pomyślnie zdekodowano JSON.\n\n";
-        // 3. Automatyczne wypełnianie RADIO / CHECKBOX
         if (fieldType === 'radio' && aiData.answers) {
             aiData.answers.forEach(ansNum => {
-                const index = parseInt(ansNum) - 1; // Tablice w JS są indeksowane od 0, ludzkie liczenie od 1
+                const index = parseInt(ansNum) - 1;
                 if (radios[index]) {
                     radios[index].checked = true;
-                    // Wywołanie zdarzenia dla nowoczesnych frameworków front-end
                     radios[index].dispatchEvent(new Event('change', { bubbles: true }));
                 }
             });
@@ -81,17 +77,14 @@ function handleAIResponse(replyText, fieldType, inputs, radios) {
             showResponseDiv(actionLog);
         }
 
-        // 4. Automatyczne wypełnianie INPUTÓW tekstowych / numerycznych
         if (fieldType === 'input') {
             let filledCount = 0;
             Object.keys(aiData).forEach((key) => {
-                // Wyciąganie numeru z klucza (np. "ans2" -> 2)
                 const match = key.match(/\d+/);
                 if (match) {
                     const index = parseInt(match[0]) - 1;
                     if (inputs[index]) {
                         inputs[index].value = aiData[key];
-                        // Wywołanie zdarzeń symulujących zachowanie człowieka
                         inputs[index].dispatchEvent(new Event('input', { bubbles: true }));
                         inputs[index].dispatchEvent(new Event('change', { bubbles: true }));
                         filledCount++;
@@ -103,7 +96,6 @@ function handleAIResponse(replyText, fieldType, inputs, radios) {
         }
 
     } catch (e) {
-        // Fallback: Jeśli AI całkowicie zepsuje odpowiedź i JSON się nie sparsuje, pokazujemy treść użytkownikowi
         console.error("Błąd parsowania JSON:", cleanJsonString, e);
         showResponseDiv("Model zwrócił format, którego nie udało się automatycznie wypełnić. Oto odpowiedź:\n\n" + replyText);
     }
