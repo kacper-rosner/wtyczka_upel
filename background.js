@@ -1,4 +1,5 @@
-import { API_KEY } from "./api.js";
+import { API_KEY } from './api.js';
+
 let availableModels = [];
 
 async function getAvailableModels() {
@@ -26,10 +27,9 @@ async function getAvailableModels() {
             };
             return getScore(b.name) - getScore(a.name);
         });
-
         return sortedModels.map(m => m.name.replace('models/', ''));
     } catch (e) {
-        return ['gemini-3.1-flash-lite'];
+        return ['gemini-2.0-flash-lite'];
     }
 }
 
@@ -56,7 +56,61 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             .catch(error => sendResponse({ error: error.message }));
         return true;
     }
+    
+    if (request.action === "getModels") {
+        (async () => {
+            if (availableModels.length === 0) availableModels = await getAvailableModels();
+            sendResponse({ models: availableModels });
+        })();
+        return true;
+    }
+
+    if (request.action === "trainContext") {
+        trainContext(request.model, request.count)
+            .then(sendResponse)
+            .catch(error => sendResponse({ error: error.message }));
+        return true;
+    }
 });
+
+async function trainContext(modelName, questionCount) {
+    const storageData = await chrome.storage.local.get(['customContextFile']);
+    if (!storageData.customContextFile || !storageData.customContextFile.fileUri) {
+        throw new Error("Brak wgranego pliku PDF do przeprowadzenia treningu.");
+    }
+
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    if (Date.now() - storageData.customContextFile.uploadedAt > ONE_DAY_MS) {
+        throw new Error("Zapisany plik wygasł (TTL 24h). Wgraj go ponownie, aby trenować.");
+    }
+
+    const promptText = `Jesteś systemem trenującym i bezwzględnym analitykiem weryfikującym własną wiedzę.\nNa podstawie załączonego pliku wykonaj następujące kroki:\n1. Wygeneruj dokładnie ${questionCount} wysoce zaawansowanych i podchwytliwych pytań wyciągających esencję z tego pliku.\n2. Samodzielnie odpowiedz na te pytania, opierając się WYŁĄCZNIE na danych z pliku.\n3. Przeprowadź brutalną weryfikację własnych odpowiedzi (porównaj je ponownie z dokumentem i napraw ewentualne nieścisłości).\n4. Na podstawie powyższego procesu, stwórz gęsty, skompresowany \"Wyuczony Kontekst\" - notatkę zawierającą absolutnie kluczowe powiązania, wzory, definicje i zasady wynikające z dokumentu.\n\nZWRÓĆ TYLKO I WYŁĄCZNIE CZYSTY TEKST \"WYUCZONEGO KONTEKSTU\". Pomiń proces, nie wypisuj pytań, pomiń wstępy i zakończenia. Chcę dostać tylko czystą esencję po treningu.`;
+
+    const promptParts = [
+        { text: promptText },
+        { fileData: { fileUri: storageData.customContextFile.fileUri, mimeType: storageData.customContextFile.mimeType } }
+    ];
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: promptParts }] })
+    });
+
+    if (!response.ok) {
+        throw new Error(`Błąd treningu HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    if (result.error) {
+        throw new Error(result.error.message);
+    }
+
+    const learnedData = result.candidates[0].content.parts[0].text;
+    await chrome.storage.local.set({ learnedContext: learnedData });
+    return { success: true };
+}
+
 async function processAIWithFallback(data) {
     if (availableModels.length === 0) {
         availableModels = await getAvailableModels();
@@ -67,12 +121,17 @@ async function processAIWithFallback(data) {
     if (data.fieldType === 'radio') {
         instruction += `UWAGA: To zadanie testowe wyboru (radio).\nZwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answers": [1], "pdf_read": true/false} lub {"answers": [1, 3], "pdf_read": true/false} (gdzie liczby to numery poprawnych odpowiedzi liczone od 1).\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
     } else if (data.fieldType === 'input') {
-        instruction += `UWAGA: Zadanie posiada pola wpisywania.\nZwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"ans1": "wartosc1", "ans2": "wartosc2", "pdf_read": true/false} zgodnie z kolejnością występowania pól.\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
+        instruction += `UWAGA: Zadanie posiada pola wpisywania.\nZwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answers": ["wartosc1", "wartosc2"], "pdf_read": true/false} (tablica 'answers' zawiera gotowe wartości dla kolejnych pól na stronie w idealnej kolejności od góry do dołu).\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani żadnego tekstu przed/po obiekcie JSON.\n`;
     } else {
         instruction += `Zwróć TYLKO I WYŁĄCZNIE CZYSTY JSON w formacie: {"answer": "rozwiązanie zadania", "pdf_read": true/false}.\nNIE UŻYWAJ znaczników markdown, backticków (\`\`\`) ani tekstu.\n`;
     }
 
-    const storageData = await chrome.storage.local.get(['customContextFile', 'contextEnabled', 'knowledgeModeEnabled']);
+    const storageData = await chrome.storage.local.get(['customContextFile', 'contextEnabled', 'knowledgeModeEnabled', 'learnedContext']);
+    
+    if (storageData.contextEnabled && storageData.learnedContext) {
+        instruction += `\n--- WYUCZONY KONTEKST BAZOWY ---\nOto przetworzona i zweryfikowana esencja wiedzy wynikająca z dostarczonego pliku bazowego. Traktuj to jako dogmat:\n${storageData.learnedContext}\n----------------------------------\n\n`;
+    }
+
     const promptParts = [{ text: instruction + "ZADANIE:\n" + data.text }];
 
     if (storageData.contextEnabled && storageData.customContextFile && storageData.customContextFile.fileUri) {
@@ -128,5 +187,5 @@ async function processAIWithFallback(data) {
         }
     }
 
-    return { error: "Wyczerpano limit zapytań dla wszystkich dostępnych modeli. Odczekaj chwilę." };
+    return { error: "Wyczerpano limit zapytań dla wszystkich dostępnych modeli." };
 }
