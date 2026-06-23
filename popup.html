@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: sans-serif; padding: 15px; width: 340px; margin: 0; }
+        .container { display: flex; flex-direction: column; gap: 12px; }
+        button { padding: 8px; background: #38bdf8; border: none; color: white; cursor: pointer; transition: 0.2s; border-radius: 4px; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .toggle-container { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: bold; }
+        h2 { margin: 0 0 10px 0; font-size: 16px; text-align: center; }
+        #status { font-size: 12px; font-weight: bold; text-align: center; min-height: 15px; }
+        #aiStatus { font-size: 12px; font-weight: bold; text-align: center; margin-bottom: 5px; }
+        .hidden { display: none !important; }
+        #actionButtons { display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; }
+        #logsArea { background: #f1f5f9; padding: 10px; border-radius: 4px; font-size: 11px; white-space: pre-wrap; word-wrap: break-word; max-height: 200px; overflow-y: auto; }
+        input[type="file"] { font-size: 12px; }
+        
+        .train-container { border: 1px solid #cbd5e1; padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px; background: #f8fafc;}
+        .train-container label { font-size: 11px; font-weight: bold; color: #475569; margin-bottom: -4px;}
+        .train-container select, .train-container input { padding: 4px; font-size: 12px; border: 1px solid #cbd5e1; border-radius: 4px; }
+        #trainBtn { background: #8b5cf6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Ustawienia AI</h2>
+        <div class="toggle-container">
+            <input type="checkbox" id="enableContextToggle" />
+            <label for="enableContextToggle">Włącz kontekst (PDF/PPTX)</label>
+        </div>
+        <div class="toggle-container">
+            <input type="checkbox" id="knowledgeModeToggle" />
+            <label for="knowledgeModeToggle">Tryb Knowledge</label>
+        </div>
+        <div class="toggle-container">
+            <input type="checkbox" id="floatingBtnToggle" />
+            <label for="floatingBtnToggle">Pokaż pływający przycisk na stronie</label>
+        </div>
+        <div class="toggle-container">
+            <input type="checkbox" id="hideButtonsToggle" />
+            <label for="hideButtonsToggle">Ukryj sekcję wgrywania</label>
+        </div>
+        <div class="toggle-container">
+            <input type="checkbox" id="hideLogsToggle" />
+            <label for="hideLogsToggle">Ukryj logi i JSON</label>
+        </div>
+        <div class="toggle-container">
+            <input type="checkbox" id="hideOnPageLogsToggle" />
+            <label for="hideOnPageLogsToggle">Ukryj komunikaty na stronie</label>
+        </div>
+
+        <div id="actionButtons">
+            <input type="file" id="fileInput" accept=".pdf,.pptx" disabled />
+            <button id="saveBtn" disabled>Zapisz kontekst do chmury</button>
+            <button id="clearBtn" disabled>Wyczyść</button>
+            <button id="downloadQuestionsBtn" style="background:#22c55e;">Pobierz pytania TXT</button>
+            <button id="clearQuestionsBtn" style="background:#ef4444;">Wyczyść zapis pytań</button>
+            <div id="questionsStatus"></div>
+            
+            <div class="train-container">
+                <label>Model gnębiący (Trener):</label>
+                <select id="trainModelSelect" disabled></select>
+                <label>Ilość pytań z PDF (1-20):</label>
+                <input type="number" id="trainCountInput" min="1" max="20" value="5" disabled />
+                <button id="trainBtn" disabled>Rozpocznij Trening (Auto-Refleksję)</button>
+            </div>
+            
+            <div id="status"></div>
+        </div>
+
+        <div id="logsArea">
+            <div id="aiStatus">Status AI: Brak danych</div>
+            <div id="jsonOutput">Oczekiwanie na wynik...</div>
+        </div>
+    </div>
+    <script type="module" src="popup.js"></script>
+</body>
+</html>

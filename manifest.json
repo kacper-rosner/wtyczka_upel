@@ -2,7 +2,14 @@
   "manifest_version": 3,
   "name": "Web AI Reader",
   "version": "1.0",
-  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+  "activeTab", 
+  "scripting",
+  "storage",
+  "unlimitedStorage"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",
@@ -23,4 +30,5 @@
       "description": "Uruchom analizę AI"
     }
   }
+  
 }
